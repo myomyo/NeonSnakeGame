@@ -9,6 +9,7 @@ import { useGameStore, globalGameState } from '../store/gameStore';
 import { WORLD_SIZE, TURN_SPEED, BOOST_SPEED, BASE_SPEED } from '../shared/types';
 import * as THREE from 'three';
 import { Sphere, Grid } from '@react-three/drei';
+import { playEatSound, playDeathSound } from '../lib/audio';
 
 const localCollectedOrbs = new Set<string>();
 
@@ -17,6 +18,7 @@ function Snake({ playerId, color, isLocal }: { playerId: string, color: string, 
   const headRef = useRef<THREE.Mesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const currentPositions = useRef<{x: number, y: number}[]>([]);
+  const rainbowColor = useMemo(() => new THREE.Color(), []);
 
   useFrame((state, delta) => {
     if (!bodyRef.current || !headRef.current) return;
@@ -29,6 +31,9 @@ function Snake({ playerId, color, isLocal }: { playerId: string, color: string, 
       headRef.current.visible = false;
       return;
     }
+
+    const { specialTimeout } = player;
+    const isSpecial = specialTimeout > 0;
     
     headRef.current.visible = true;
     const count = player.segments.length;
@@ -64,13 +69,33 @@ function Snake({ playerId, color, isLocal }: { playerId: string, color: string, 
       
       if (i === 0) {
         headRef.current.position.set(curr.x, curr.y, 0.5);
+        if (isSpecial) {
+          rainbowColor.setHSL((state.clock.elapsedTime * 0.5) % 1, 0.8, 0.6);
+          (headRef.current.material as THREE.MeshStandardMaterial).color.copy(rainbowColor);
+          (headRef.current.material as THREE.MeshStandardMaterial).emissive.copy(rainbowColor);
+          headRef.current.scale.setScalar(1.2 + Math.sin(state.clock.elapsedTime * 10) * 0.1);
+        } else {
+          (headRef.current.material as THREE.MeshStandardMaterial).color.set(color);
+          (headRef.current.material as THREE.MeshStandardMaterial).emissive.set(color);
+          headRef.current.scale.setScalar(1);
+        }
       } else {
         dummy.position.set(curr.x, curr.y, 0.5);
+        if (isSpecial) {
+          dummy.scale.setScalar(0.8 + Math.sin(state.clock.elapsedTime * 10 + i * 0.5) * 0.2);
+          rainbowColor.setHSL((state.clock.elapsedTime * 0.5 + i * 0.05) % 1, 0.8, 0.6);
+          bodyRef.current.setColorAt(i - 1, rainbowColor);
+        } else {
+          dummy.scale.setScalar(1);
+          rainbowColor.set(color);
+          bodyRef.current.setColorAt(i - 1, rainbowColor);
+        }
         dummy.updateMatrix();
         bodyRef.current.setMatrixAt(i - 1, dummy.matrix);
       }
     }
     bodyRef.current.instanceMatrix.needsUpdate = true;
+    if (bodyRef.current.instanceColor) bodyRef.current.instanceColor.needsUpdate = true;
   });
 
   return (
@@ -78,38 +103,22 @@ function Snake({ playerId, color, isLocal }: { playerId: string, color: string, 
       <Sphere ref={headRef} castShadow receiveShadow args={[0.8, 16, 16]}>
         <meshStandardMaterial
           color={color}
+          emissive={color}
+          emissiveIntensity={2}
           roughness={0.2}
           metalness={0.8}
           toneMapped={false}
-          onBeforeCompile={(shader) => {
-            shader.fragmentShader = shader.fragmentShader.replace(
-              '#include <emissivemap_fragment>',
-              `
-              #include <emissivemap_fragment>
-              float fresnel = pow(1.0 - max(dot(normal, normalize(vViewPosition)), 0.0), 2.0);
-              totalEmissiveRadiance += diffuseColor.rgb * (0.4 + fresnel * 3.0);
-              `
-            );
-          }}
         />
       </Sphere>
       <instancedMesh ref={bodyRef} args={[null as any, null as any, 2000]} castShadow receiveShadow frustumCulled={false}>
         <sphereGeometry args={[0.6, 16, 16]} />
         <meshStandardMaterial
           color={color}
+          emissive={color}
+          emissiveIntensity={1}
           roughness={0.2}
           metalness={0.8}
           toneMapped={false}
-          onBeforeCompile={(shader) => {
-            shader.fragmentShader = shader.fragmentShader.replace(
-              '#include <emissivemap_fragment>',
-              `
-              #include <emissivemap_fragment>
-              float fresnel = pow(1.0 - max(dot(normal, normalize(vViewPosition)), 0.0), 2.0);
-              totalEmissiveRadiance += diffuseColor.rgb * (0.4 + fresnel * 1.5);
-              `
-            );
-          }}
         />
       </instancedMesh>
     </group>
@@ -117,51 +126,90 @@ function Snake({ playerId, color, isLocal }: { playerId: string, color: string, 
 }
 
 function Orbs() {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const normalMeshRef = useRef<THREE.InstancedMesh>(null);
+  const specialMeshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const colorObj = useMemo(() => new THREE.Color(), []);
 
-  useFrame(() => {
-    if (!meshRef.current) return;
+  useFrame((state) => {
+    if (!normalMeshRef.current || !specialMeshRef.current) return;
     const gs = globalGameState.current;
     if (!gs) return;
 
-    let i = 0;
+    let normalIdx = 0;
+    let specialIdx = 0;
     for (const orbId in gs.orbs) {
       if (localCollectedOrbs.has(orbId)) continue;
       const orb = gs.orbs[orbId];
+      
       dummy.position.set(orb.x, orb.y, 0.5);
-      dummy.updateMatrix();
-      meshRef.current.setMatrixAt(i, dummy.matrix);
-      colorObj.set(orb.color);
-      meshRef.current.setColorAt(i, colorObj);
-      i++;
+      
+      if (orb.type === 'special') {
+        const t = state.clock.elapsedTime * 3;
+        dummy.rotation.set(t, t * 1.1, t * 0.9);
+        dummy.scale.setScalar(1.5 + Math.sin(t * 2) * 0.3);
+        dummy.updateMatrix();
+        specialMeshRef.current.setMatrixAt(specialIdx, dummy.matrix);
+        colorObj.setHSL((state.clock.elapsedTime * 0.5) % 1, 1, 0.6);
+        specialMeshRef.current.setColorAt(specialIdx, colorObj);
+        specialIdx++;
+      } else {
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.setScalar(1);
+        dummy.updateMatrix();
+        normalMeshRef.current.setMatrixAt(normalIdx, dummy.matrix);
+        colorObj.set(orb.color);
+        normalMeshRef.current.setColorAt(normalIdx, colorObj);
+        normalIdx++;
+      }
     }
-    meshRef.current.count = i;
-    meshRef.current.instanceMatrix.needsUpdate = true;
-    if (meshRef.current.instanceColor) {
-      meshRef.current.instanceColor.needsUpdate = true;
-    }
+    
+    normalMeshRef.current.count = normalIdx;
+    normalMeshRef.current.instanceMatrix.needsUpdate = true;
+    if (normalMeshRef.current.instanceColor) normalMeshRef.current.instanceColor.needsUpdate = true;
+
+    specialMeshRef.current.count = specialIdx;
+    specialMeshRef.current.instanceMatrix.needsUpdate = true;
+    if (specialMeshRef.current.instanceColor) specialMeshRef.current.instanceColor.needsUpdate = true;
   });
 
   return (
-    <instancedMesh ref={meshRef} args={[null as any, null as any, 1000]} castShadow receiveShadow frustumCulled={false}>
-      <sphereGeometry args={[0.5, 16, 16]} />
-      <meshStandardMaterial
-        roughness={0.4}
-        metalness={0.1}
-        toneMapped={false}
-        onBeforeCompile={(shader) => {
-          shader.fragmentShader = shader.fragmentShader.replace(
-            '#include <emissivemap_fragment>',
-            `
-            #include <emissivemap_fragment>
-            totalEmissiveRadiance += diffuseColor.rgb * 2.5;
-            `
-          );
-        }}
-      />
-    </instancedMesh>
+    <>
+      <instancedMesh ref={normalMeshRef} args={[null as any, null as any, 1000]} castShadow receiveShadow frustumCulled={false}>
+        <sphereGeometry args={[0.5, 16, 16]} />
+        <meshStandardMaterial
+          roughness={0.4}
+          metalness={0.1}
+          toneMapped={false}
+          onBeforeCompile={(shader) => {
+            shader.fragmentShader = shader.fragmentShader.replace(
+              '#include <emissivemap_fragment>',
+              `
+              #include <emissivemap_fragment>
+              totalEmissiveRadiance += diffuseColor.rgb * 2.5;
+              `
+            );
+          }}
+        />
+      </instancedMesh>
+      <instancedMesh ref={specialMeshRef} args={[null as any, null as any, 100]} castShadow receiveShadow frustumCulled={false}>
+        <octahedronGeometry args={[1.2, 0]} />
+        <meshStandardMaterial
+          roughness={0.1}
+          metalness={0.9}
+          toneMapped={false}
+          onBeforeCompile={(shader) => {
+            shader.fragmentShader = shader.fragmentShader.replace(
+              '#include <emissivemap_fragment>',
+              `
+              #include <emissivemap_fragment>
+              totalEmissiveRadiance += diffuseColor.rgb * 5.0;
+              `
+            );
+          }}
+        />
+      </instancedMesh>
+    </>
   );
 }
 
@@ -178,6 +226,7 @@ export function GameScene() {
     score: number;
     currentAngle: number;
     isBoosting: boolean;
+    specialTimeout: number;
     lastSendTime: number;
   }>({
     active: false,
@@ -185,6 +234,7 @@ export function GameScene() {
     score: 10,
     currentAngle: 0,
     isBoosting: false,
+    specialTimeout: 0,
     lastSendTime: 0,
   });
 
@@ -229,6 +279,7 @@ export function GameScene() {
         localPlayerRef.current.segments = [...serverPlayer.segments];
         localPlayerRef.current.score = serverPlayer.score;
         localPlayerRef.current.currentAngle = serverPlayer.currentAngle;
+        localPlayerRef.current.specialTimeout = serverPlayer.specialTimeout || 0;
       }
 
       if (!localPlayerRef.current.active) return;
@@ -238,7 +289,7 @@ export function GameScene() {
       if (inputs.current.right) localPlayerRef.current.currentAngle -= TURN_SPEED * delta;
       
       localPlayerRef.current.isBoosting = inputs.current.boost && localPlayerRef.current.score > 10;
-      const speed = localPlayerRef.current.isBoosting ? BOOST_SPEED : BASE_SPEED;
+      const speed = (localPlayerRef.current.isBoosting || localPlayerRef.current.specialTimeout > 0) ? BOOST_SPEED : BASE_SPEED;
       
       const head = { ...localPlayerRef.current.segments[0] };
       head.x += Math.cos(localPlayerRef.current.currentAngle) * speed * delta;
@@ -253,7 +304,7 @@ export function GameScene() {
 
       localPlayerRef.current.segments.unshift(head);
 
-      if (localPlayerRef.current.isBoosting) {
+      if (localPlayerRef.current.isBoosting && localPlayerRef.current.specialTimeout <= 0) {
         localPlayerRef.current.score -= 2 * delta;
         if (localPlayerRef.current.score <= 10) {
           localPlayerRef.current.isBoosting = false;
@@ -266,6 +317,10 @@ export function GameScene() {
         localPlayerRef.current.segments.pop();
       }
 
+      if (localPlayerRef.current.specialTimeout > 0) {
+        localPlayerRef.current.specialTimeout -= delta;
+      }
+
       // Check orb collisions
       for (const orbId in gs.orbs) {
         if (localCollectedOrbs.has(orbId)) continue;
@@ -274,8 +329,12 @@ export function GameScene() {
         const dy = head.y - orb.y;
         if (dx * dx + dy * dy < 4) {
           localPlayerRef.current.score += orb.value;
+          if (orb.type === 'special') {
+            localPlayerRef.current.specialTimeout = 10; // 10 seconds of beauty
+          }
           localCollectedOrbs.add(orbId);
           delete gs.orbs[orbId]; // predict locally
+          playEatSound();
           sendCollectOrb(orbId);
         }
       }
@@ -306,11 +365,13 @@ export function GameScene() {
 
       if (collided) {
         localPlayerRef.current.active = false;
+        playDeathSound();
         sendPlayerState({
           segments: localPlayerRef.current.segments,
           score: localPlayerRef.current.score,
           currentAngle: localPlayerRef.current.currentAngle,
           isBoosting: localPlayerRef.current.isBoosting,
+          specialTimeout: localPlayerRef.current.specialTimeout,
           state: 'dead'
         });
         return;
@@ -330,6 +391,7 @@ export function GameScene() {
           score: localPlayerRef.current.score,
           currentAngle: localPlayerRef.current.currentAngle,
           isBoosting: localPlayerRef.current.isBoosting,
+          specialTimeout: localPlayerRef.current.specialTimeout,
           state: 'alive'
         });
         localPlayerRef.current.lastSendTime = now;

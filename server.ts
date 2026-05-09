@@ -47,7 +47,7 @@ const state: GameState = {
   leaderboard: [],
 };
 
-function spawnOrb(x?: number, y?: number, value = 1, color?: string, force = false) {
+function spawnOrb(x?: number, y?: number, value = 1, color?: string, force = false, type: 'normal' | 'special' = 'normal') {
   if (!force && Object.keys(state.orbs).length >= MAX_ORBS) return;
   const id = uuidv4();
   state.orbs[id] = {
@@ -56,6 +56,7 @@ function spawnOrb(x?: number, y?: number, value = 1, color?: string, force = fal
     y: y ?? (Math.random() - 0.5) * WORLD_SIZE,
     value,
     color: color ?? COLORS[Math.floor(Math.random() * COLORS.length)],
+    type,
   };
 }
 
@@ -94,18 +95,22 @@ io.on('connection', (socket) => {
       state: 'alive',
       currentAngle: angle,
       inputs: { left: false, right: false, boost: false },
+      specialTimeout: 0,
     };
 
     socket.emit('init', socket.id);
   });
 
-  socket.on('update_state', (data: { segments: any[], score: number, currentAngle: number, isBoosting: boolean, state: string }) => {
+  socket.on('update_state', (data: { segments: any[], score: number, currentAngle: number, isBoosting: boolean, state: string, specialTimeout?: number }) => {
     const player = state.players[socket.id];
     if (player && player.state === 'alive') {
       player.segments = data.segments;
       player.score = data.score;
       player.currentAngle = data.currentAngle;
       player.isBoosting = data.isBoosting;
+      if (data.specialTimeout !== undefined) {
+        player.specialTimeout = data.specialTimeout;
+      }
       
       if (data.state === 'dead') {
         player.state = 'dead';
@@ -151,7 +156,8 @@ setInterval(() => {
 
   // Spawn random orbs
   if (Math.random() < 0.2) {
-    spawnOrb();
+    const isSpecial = Math.random() < 0.05; // 5% chance of special orb
+    spawnOrb(undefined, undefined, isSpecial ? 5 : 1, undefined, false, isSpecial ? 'special' : 'normal');
   }
 
   // Update leaderboard

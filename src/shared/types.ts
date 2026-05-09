@@ -21,6 +21,7 @@ export type Player = {
   state: PlayerState;
   currentAngle: number;
   inputs: { left: boolean; right: boolean; boost: boolean };
+  specialTimeout: number; // Time remaining for special effect
 };
 
 export type Orb = {
@@ -29,6 +30,7 @@ export type Orb = {
   y: number;
   value: number;
   color: string;
+  type: 'normal' | 'special';
 };
 
 export type LeaderboardEntry = {
