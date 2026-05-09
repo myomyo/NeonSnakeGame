@@ -13,7 +13,7 @@ import type {
   GameState,
   Player,
   Orb,
-} from './src/shared/types.ts';
+} from './src/shared/types';
 import {
   WORLD_SIZE,
   BASE_SPEED,
@@ -23,7 +23,7 @@ import {
   INITIAL_LENGTH,
   SEGMENT_SPACING,
   TURN_SPEED,
-} from './src/shared/constants.ts';
+} from './src/shared/constants';
 
 const app = express();
 const httpServer = createServer(app);
