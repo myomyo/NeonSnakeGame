@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import { io, Socket } from 'socket.io-client';
-import { GameState, Player } from '../shared/types';
+import type { GameState, Player } from '../shared/types';
 
 interface GameStore {
   socket: Socket | null;

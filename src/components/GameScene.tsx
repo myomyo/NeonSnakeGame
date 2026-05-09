@@ -6,7 +6,8 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useGameStore, globalGameState } from '../store/gameStore';
-import { WORLD_SIZE, TURN_SPEED, BOOST_SPEED, BASE_SPEED } from '../shared/types';
+import type { Player, GameState, Orb } from '../shared/types';
+import { WORLD_SIZE, TURN_SPEED, BOOST_SPEED, BASE_SPEED } from '../shared/constants';
 import * as THREE from 'three';
 import { Sphere, Grid } from '@react-three/drei';
 import { playEatSound, playDeathSound } from '../lib/audio';
